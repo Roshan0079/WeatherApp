@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WeatherWise — Real-time Weather Dashboard</title>
+    <meta name="description" content="Real-time weather forecasts with advanced data for any location around the world.">
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="dashboard">
+
+        <!-- LEFT SIDEBAR -->
+        <aside class="sidebar">
+            <div class="sidebar-inner">
+                <div class="brand">
+                    <span class="brand-icon"><i class="fas fa-cloud-sun"></i></span>
+                    <h2>WeatherWise</h2>
+                </div>
+
+                <!-- Humidity Gauge -->
+                <div class="sidebar-card status-card">
+                    <span class="card-label">Humidity</span>
+                    <div class="humidity-gauge">
+                        <svg viewBox="0 0 120 80" class="gauge-svg">
+                            <path d="M 10 70 A 50 50 0 0 1 110 70" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="8" stroke-linecap="round"/>
+                            <path d="M 10 70 A 50 50 0 0 1 110 70" fill="none" stroke="url(#gaugeGradient)" stroke-width="8" stroke-linecap="round" id="gauge-arc" stroke-dasharray="157" stroke-dashoffset="157"/>
+                            <defs>
+                                <linearGradient id="gaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                    <stop offset="0%" style="stop-color:#4facfe"/>
+                                    <stop offset="100%" style="stop-color:#00f2fe"/>
+                                </linearGradient>
+                            </defs>
+                        </svg>
+                        <div class="gauge-info">
+                            <span class="gauge-value" id="sidebar-humidity">--%</span>
+                            <span class="gauge-label">Humidity</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Air Quality Card -->
+                <div class="sidebar-card aqi-card">
+                    <span class="card-label">Air Quality</span>
+                    <div class="aqi-display">
+                        <div class="aqi-number" id="aqi-value">--</div>
+                        <div class="aqi-badge" id="aqi-badge">N/A</div>
+                    </div>
+                    <div class="aqi-details">
+                        <div class="aqi-detail-item">
+                            <span class="aqi-label">PM2.5</span>
+                            <span class="aqi-val" id="aqi-pm25">--</span>
+                        </div>
+                        <div class="aqi-detail-item">
+                            <span class="aqi-label">PM10</span>
+                            <span class="aqi-val" id="aqi-pm10">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Wind & Rain Card -->
+                <div class="sidebar-card details-card">
+                    <span class="card-label">Details</span>
+                    <div class="detail-row">
+                        <div class="detail-item">
+                            <i class="fas fa-wind"></i>
+                            <div>
+                                <span class="detail-val" id="sidebar-wind">-- km/h</span>
+                                <span class="detail-lbl">Wind</span>
+                            </div>
+                        </div>
+                        <div class="detail-item">
+                            <i class="fas fa-cloud-rain"></i>
+                            <div>
+                                <span class="detail-val" id="sidebar-rain">-- mm</span>
+                                <span class="detail-lbl">Rainfall</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Location Info -->
+                <div class="sidebar-card location-card">
+                    <span class="card-label">Your Location</span>
+                    <div class="location-pin">
+                        <i class="fas fa-map-marker-alt"></i>
+                        <span id="sidebar-location">Detecting...</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT -->
+        <main class="main-content">
+            <!-- Top Bar -->
+            <div class="top-bar">
+                <div class="mobile-brand">
+                    <span class="brand-icon"><i class="fas fa-cloud-sun"></i></span>
+                    <h2>WeatherWise</h2>
+                </div>
+                <div class="current-location">
+                    <i class="fas fa-location-dot"></i>
+                    <span id="location-text">Detecting location...</span>
+                    <span class="date-text" id="date-text"></span>
+                </div>
+                <div class="top-actions">
+                    <div class="search-wrapper" id="search-wrapper">
+                        <button class="search-toggle" id="search-toggle"><i class="fas fa-magnifying-glass"></i></button>
+                        <div class="search-container" id="search-container">
+                            <form class="search-form" id="search-form">
+                                <input type="text" id="city-input" placeholder="Search city, town..." autocomplete="off">
+                                <button type="submit"><i class="fas fa-arrow-right"></i></button>
+                            </form>
+                            <div class="suggestions-dropdown hidden" id="suggestions-dropdown">
+                                <!-- JS populates suggestions here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hero Weather -->
+            <div class="hero-weather" id="hero-weather">
+                <div class="hero-left">
+                    <div class="hero-temp-block">
+                        <h1 class="hero-temp" id="hero-temp">--°</h1>
+                        <div class="hero-hilo">
+                            <span><b>H</b> <span id="hero-high">--</span>°</span>
+                            <span><b>L</b> <span id="hero-low">--</span>°</span>
+                        </div>
+                    </div>
+                    <div class="hero-description">
+                        <h2 id="hero-desc-line1">Loading</h2>
+                        <h2 id="hero-desc-line2" class="desc-sub">weather data...</h2>
+                    </div>
+                </div>
+                <div class="hero-right">
+                    <p class="hero-tagline">With real time data and advanced technology, we provide reliable forecasts for any location around the world.</p>
+
+                    <!-- Recently Searched -->
+                    <div class="recently-searched hidden" id="recently-searched-section">
+                        <div class="section-header">
+                            <span>Recently Searched</span>
+                        </div>
+                        <div class="recent-cards" id="recent-cards"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hourly Forecast -->
+            <div class="hourly-section">
+                <h3 class="section-title">Hourly Forecast</h3>
+                <div class="hourly-scroll" id="hourly-scroll">
+                    <!-- JS populates hourly cards -->
+                </div>
+            </div>
+
+            <!-- Weekly Forecast -->
+            <div class="forecast-bar" id="forecast-bar">
+                <!-- JS populates days -->
+            </div>
+
+            <!-- Loading / Error -->
+            <div class="loading-overlay hidden" id="loading-overlay">
+                <div class="spinner"></div>
+                <p>Fetching weather data...</p>
+            </div>
+            <div class="error-overlay hidden" id="error-overlay">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p id="error-text">Something went wrong.</p>
+            </div>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
