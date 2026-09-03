@@ -1,8 +1,50 @@
 document.addEventListener('DOMContentLoaded', () => {
 
-    const API_BASE = (window.location.protocol === 'file:' || (window.location.hostname === '127.0.0.1' && window.location.port !== '5000')) 
-        ? 'http://127.0.0.1:5000' 
-        : '';
+    // ---- WMO Weather Codes (moved from Python backend) ----
+    const WMO_CODES = {
+        0: ["Clear sky", "fa-sun"],
+        1: ["Mainly clear", "fa-sun"],
+        2: ["Partly cloudy", "fa-cloud-sun"],
+        3: ["Overcast", "fa-cloud"],
+        45: ["Foggy", "fa-smog"],
+        48: ["Depositing rime fog", "fa-smog"],
+        51: ["Light drizzle", "fa-cloud-rain"],
+        53: ["Moderate drizzle", "fa-cloud-rain"],
+        55: ["Dense drizzle", "fa-cloud-showers-heavy"],
+        56: ["Freezing drizzle", "fa-cloud-rain"],
+        57: ["Dense freezing drizzle", "fa-cloud-showers-heavy"],
+        61: ["Slight rain", "fa-cloud-rain"],
+        63: ["Moderate rain", "fa-cloud-showers-heavy"],
+        65: ["Heavy rain", "fa-cloud-showers-heavy"],
+        66: ["Freezing rain", "fa-cloud-rain"],
+        67: ["Heavy freezing rain", "fa-cloud-showers-heavy"],
+        71: ["Slight snowfall", "fa-snowflake"],
+        73: ["Moderate snowfall", "fa-snowflake"],
+        75: ["Heavy snowfall", "fa-snowflake"],
+        77: ["Snow grains", "fa-snowflake"],
+        80: ["Slight rain showers", "fa-cloud-sun-rain"],
+        81: ["Moderate rain showers", "fa-cloud-showers-heavy"],
+        82: ["Violent rain showers", "fa-cloud-showers-heavy"],
+        85: ["Slight snow showers", "fa-snowflake"],
+        86: ["Heavy snow showers", "fa-snowflake"],
+        95: ["Thunderstorm", "fa-bolt"],
+        96: ["Thunderstorm with slight hail", "fa-bolt"],
+        99: ["Thunderstorm with heavy hail", "fa-bolt"],
+    };
+
+    function getWeatherDescription(code) {
+        return WMO_CODES[code] || ["Unknown", "fa-question"];
+    }
+
+    function getAqiLabel(aqi) {
+        if (aqi == null) return ["N/A", "aqi-na"];
+        if (aqi <= 50) return ["Good", "aqi-good"];
+        if (aqi <= 100) return ["Moderate", "aqi-moderate"];
+        if (aqi <= 150) return ["Unhealthy for Sensitive", "aqi-sensitive"];
+        if (aqi <= 200) return ["Unhealthy", "aqi-unhealthy"];
+        if (aqi <= 300) return ["Very Unhealthy", "aqi-very-unhealthy"];
+        return ["Hazardous", "aqi-hazardous"];
+    }
 
     // ---- DOM References ----
     const searchToggle = document.getElementById('search-toggle');
@@ -76,7 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // ---- Autocomplete Suggestions ----
+    // ---- Autocomplete Suggestions (Direct API call) ----
     cityInput.addEventListener('input', () => {
         const q = cityInput.value.trim();
         clearTimeout(searchDebounce);
@@ -91,13 +133,34 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function fetchSuggestions(query) {
         try {
-            const resp = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`);
-            const suggestions = await resp.json();
+            const resp = await fetch(
+                `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=6&language=en`
+            );
+            const geoData = await resp.json();
+            const results = geoData.results || [];
 
-            if (!suggestions.length) {
+            if (!results.length) {
                 closeSuggestions();
                 return;
             }
+
+            // Build suggestions in the same format the UI expects
+            const suggestions = results.map(r => {
+                const name = r.name || '';
+                const admin1 = r.admin1 || '';
+                const country = r.country || '';
+                const parts = [name];
+                if (admin1 && admin1 !== name) parts.push(admin1);
+                if (country) parts.push(country);
+                return {
+                    display: parts.join(', '),
+                    name,
+                    admin1,
+                    country,
+                    latitude: r.latitude,
+                    longitude: r.longitude
+                };
+            });
 
             suggestionsDropdown.innerHTML = '';
             activeSuggestionIdx = -1;
@@ -154,7 +217,6 @@ document.addEventListener('DOMContentLoaded', () => {
             highlightSuggestion();
         } else if (e.key === 'Enter' && activeSuggestionIdx >= 0) {
             e.preventDefault();
-            // Get the suggestion data from the DOM
             const activeItem = items[activeSuggestionIdx];
             if (activeItem) activeItem.click();
         }
@@ -171,7 +233,7 @@ document.addEventListener('DOMContentLoaded', () => {
         closeSuggestions();
         searchContainer.classList.remove('active');
         cityInput.value = '';
-        fetchWeatherFromSuggestion(suggestion);
+        fetchWeatherDirect(suggestion.latitude, suggestion.longitude, suggestion.name, suggestion.admin1, suggestion.country);
     }
 
     function closeSuggestions() {
@@ -227,7 +289,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 fetchWeatherByCoords(lat, lon);
                 return;
             } catch (e) {
-                // Invalid cached data, fall through to fresh request
                 localStorage.removeItem('weatherwise_coords');
             }
         }
@@ -235,100 +296,235 @@ document.addEventListener('DOMContentLoaded', () => {
         requestFreshLocation();
     }
 
-    // ---- Retry State ----
-    let retryTimer = null;
-    const MAX_RETRIES = 3;
-    let retryCount = 0;
+    // ---- Core: Fetch weather data directly from Open-Meteo APIs ----
+    async function fetchWeatherDataDirect(latitude, longitude) {
+        // Fetch weather + hourly + daily
+        const weatherUrl =
+            `https://api.open-meteo.com/v1/forecast?` +
+            `latitude=${latitude}&longitude=${longitude}` +
+            `&current=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation,weather_code` +
+            `&hourly=temperature_2m,weather_code` +
+            `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code` +
+            `&timezone=auto&forecast_hours=24`;
 
-    function isNetworkError(err) {
-        return err instanceof TypeError && (
-            err.message.includes('Failed to fetch') ||
-            err.message.includes('NetworkError') ||
-            err.message.includes('Network request failed')
-        );
+        const weatherResp = await fetch(weatherUrl);
+        if (!weatherResp.ok) throw new Error('Failed to fetch weather data');
+        const weatherData = await weatherResp.json();
+
+        // Fetch air quality
+        let airQuality = { us_aqi: null, pm10: null, pm2_5: null, label: 'N/A', class: 'aqi-na' };
+        try {
+            const aqiUrl =
+                `https://air-quality-api.open-meteo.com/v1/air-quality?` +
+                `latitude=${latitude}&longitude=${longitude}` +
+                `&current=us_aqi,pm10,pm2_5`;
+            const aqiResp = await fetch(aqiUrl);
+            if (aqiResp.ok) {
+                const aqiJson = await aqiResp.json();
+                const aqiCurrent = aqiJson.current || {};
+                const usAqi = aqiCurrent.us_aqi;
+                const [label, cls] = getAqiLabel(usAqi);
+                airQuality = {
+                    us_aqi: usAqi,
+                    pm10: aqiCurrent.pm10 || null,
+                    pm2_5: aqiCurrent.pm2_5 || null,
+                    label,
+                    class: cls
+                };
+            }
+        } catch (e) { /* ignore AQI errors */ }
+
+        // Extract current weather
+        const current = weatherData.current || {};
+        const weatherCode = current.weather_code || 0;
+        const [description, icon] = getWeatherDescription(weatherCode);
+
+        // Extract hourly (next 24 hours)
+        const hourly = weatherData.hourly || {};
+        const hourlyTimes = hourly.time || [];
+        const hourlyTemps = hourly.temperature_2m || [];
+        const hourlyCodes = hourly.weather_code || [];
+
+        const hourlyData = hourlyTimes.map((t, i) => {
+            const hCode = hourlyCodes[i] || 0;
+            const [, hIcon] = getWeatherDescription(hCode);
+            return {
+                time: t,
+                temp: hourlyTemps[i] != null ? hourlyTemps[i] : null,
+                icon: hIcon
+            };
+        });
+
+        // Extract daily forecast
+        const daily = weatherData.daily || {};
+        const dates = daily.time || [];
+        const maxTemps = daily.temperature_2m_max || [];
+        const minTemps = daily.temperature_2m_min || [];
+        const precipSum = daily.precipitation_sum || [];
+        const dailyCodes = daily.weather_code || [];
+
+        const forecast = dates.map((d, i) => {
+            const dayCode = dailyCodes[i] || 0;
+            const [dayDesc, dayIcon] = getWeatherDescription(dayCode);
+            return {
+                date: d,
+                max_temp: maxTemps[i] != null ? maxTemps[i] : null,
+                min_temp: minTemps[i] != null ? minTemps[i] : null,
+                rainfall: precipSum[i] != null ? precipSum[i] : null,
+                weather_code: dayCode,
+                description: dayDesc,
+                icon: dayIcon
+            };
+        });
+
+        return {
+            current: {
+                temperature: current.temperature_2m,
+                humidity: current.relative_humidity_2m,
+                wind_speed: current.wind_speed_10m,
+                rainfall: current.precipitation,
+                expected_rainfall: precipSum[0] || 0.0,
+                weather_code: weatherCode,
+                description,
+                icon
+            },
+            air_quality: airQuality,
+            hourly: hourlyData,
+            forecast
+        };
     }
 
-    function clearRetry() {
-        if (retryTimer) {
-            clearTimeout(retryTimer);
-            retryTimer = null;
+    // ---- Reverse geocode using Nominatim ----
+    const BAD_KEYWORDS = [
+        "hostel", "hotel", "hospital", "school", "college", "university",
+        "temple", "church", "mosque", "station", "office", "shop",
+        "restaurant", "cafe", "mall", "plaza", "tower", "building",
+        "complex", "society", "apartment", "flat", "house", "road",
+        "street", "lane", "nagar", "park", "garden", "factory",
+        "institute", "academy", "clinic", "pharmacy"
+    ];
+
+    function isValidPlaceName(name) {
+        if (!name) return false;
+        const lower = name.toLowerCase();
+        for (const kw of BAD_KEYWORDS) {
+            if (lower.includes(kw)) return false;
         }
-        retryCount = 0;
+        const upperCount = [...name].filter(c => c >= 'A' && c <= 'Z').length;
+        if (name.length > 3 && upperCount > name.length * 0.6) return false;
+        return true;
+    }
+
+    async function reverseGeocode(latitude, longitude) {
+        let city = 'Your Location';
+        let country = '';
+        let state = '';
+
+        try {
+            const reverseUrl =
+                `https://nominatim.openstreetmap.org/reverse?` +
+                `lat=${latitude}&lon=${longitude}&format=json&zoom=14` +
+                `&addressdetails=1&accept-language=en`;
+            const resp = await fetch(reverseUrl, {
+                headers: { 'User-Agent': 'WeatherWiseApp/1.0' }
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                const addr = data.address || {};
+                state = addr.state || '';
+                country = addr.country || '';
+
+                const candidates = [
+                    addr.city, addr.town, addr.village, addr.suburb, addr.municipality
+                ];
+
+                let place = null;
+                for (const c of candidates) {
+                    if (isValidPlaceName(c)) { place = c; break; }
+                }
+
+                if (place) {
+                    city = place;
+                } else {
+                    const county = addr.county || '';
+                    const stateDist = addr.state_district || '';
+                    if (county) {
+                        let cleanCounty = county;
+                        for (const suffix of [' Taluka', ' Tehsil', ' Block', ' District', ' Mandal']) {
+                            if (cleanCounty.endsWith(suffix)) {
+                                cleanCounty = cleanCounty.slice(0, -suffix.length).trim();
+                            }
+                        }
+                        city = cleanCounty;
+                    } else if (stateDist) {
+                        city = stateDist;
+                    } else {
+                        city = state || 'Your Location';
+                    }
+                }
+            }
+        } catch (e) { /* ignore */ }
+
+        return { city, state, country };
     }
 
     // ---- Fetch Functions ----
-    async function fetchWeatherFromSuggestion(s) {
+    async function fetchWeatherDirect(latitude, longitude, cityName, admin1, countryName) {
         showLoading();
-        clearRetry();
         try {
-            const params = new URLSearchParams({
-                lat: s.latitude,
-                lon: s.longitude,
-                city: s.name,
-                admin1: s.admin1 || '',
-                country: s.country || ''
-            });
-            const response = await fetch(`${API_BASE}/api/weather?${params}`);
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Failed to fetch weather');
-            updateUI(data);
-            addToRecent(data);
+            const weather = await fetchWeatherDataDirect(latitude, longitude);
+            weather.city = cityName || 'Unknown';
+            weather.state = admin1 || '';
+            weather.country = countryName || '';
+            updateUI(weather);
+            addToRecent(weather);
         } catch (err) {
-            if (isNetworkError(err)) {
-                showError('Cannot connect to server. Make sure the backend is running:\n  python weather.py');
-                scheduleRetry(() => fetchWeatherFromSuggestion(s));
-            } else {
-                showError(err.message);
-            }
+            showError(err.message || 'Failed to fetch weather data');
         }
     }
 
     async function fetchWeatherByCity(city) {
         showLoading();
-        clearRetry();
         try {
-            const response = await fetch(`${API_BASE}/api/weather?city=${encodeURIComponent(city)}`);
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'City not found');
-            updateUI(data);
-            addToRecent(data);
-        } catch (err) {
-            if (isNetworkError(err)) {
-                showError('Cannot connect to server. Make sure the backend is running:\n  python weather.py');
-                scheduleRetry(() => fetchWeatherByCity(city));
-            } else {
-                showError(err.message);
+            // Geocode the city name first
+            const geoResp = await fetch(
+                `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=5&language=en`
+            );
+            const geoData = await geoResp.json();
+            const results = geoData.results || [];
+
+            if (!results.length) {
+                showError('City not found');
+                return;
             }
+
+            const result = results[0];
+            const weather = await fetchWeatherDataDirect(result.latitude, result.longitude);
+            weather.city = result.name || city;
+            weather.state = result.admin1 || '';
+            weather.country = result.country || '';
+            updateUI(weather);
+            addToRecent(weather);
+        } catch (err) {
+            showError(err.message || 'Failed to fetch weather data');
         }
     }
 
     async function fetchWeatherByCoords(lat, lon) {
         showLoading();
-        clearRetry();
         try {
-            const response = await fetch(`${API_BASE}/api/weather/coords?lat=${lat}&lon=${lon}`);
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Failed to fetch weather');
-            updateUI(data);
-        } catch (err) {
-            if (isNetworkError(err)) {
-                showError('Cannot connect to server. Make sure the backend is running:\n  python weather.py');
-                scheduleRetry(() => fetchWeatherByCoords(lat, lon));
-            } else {
-                showError(err.message);
-            }
-        }
-    }
+            // Reverse geocode to get place name
+            const location = await reverseGeocode(lat, lon);
 
-    function scheduleRetry(retryFn) {
-        if (retryCount >= MAX_RETRIES) {
-            showError('Server is unreachable. Please start the backend:\n  python weather.py\n\nThen refresh this page.');
-            return;
+            // Fetch weather
+            const weather = await fetchWeatherDataDirect(lat, lon);
+            weather.city = location.city;
+            weather.state = location.state;
+            weather.country = location.country;
+            updateUI(weather);
+        } catch (err) {
+            showError(err.message || 'Failed to fetch weather data');
         }
-        retryCount++;
-        retryTimer = setTimeout(() => {
-            retryFn();
-        }, 5000);
     }
 
     // ---- Update UI ----
@@ -414,7 +610,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---- Render Hourly ----
     function renderHourly(hourlyData) {
         hourlyScroll.innerHTML = '';
-        const currentHour = new Date().getHours();
 
         hourlyData.forEach((h, idx) => {
             const timeObj = new Date(h.time);
