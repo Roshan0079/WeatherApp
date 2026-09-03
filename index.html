@@ -106,6 +106,9 @@
                     <span class="date-text" id="date-text"></span>
                 </div>
                 <div class="top-actions">
+                    <button class="current-location-btn" id="current-location-btn" title="Use Current Location">
+                        <i class="fas fa-crosshairs"></i>
+                    </button>
                     <div class="search-wrapper" id="search-wrapper">
                         <button class="search-toggle" id="search-toggle"><i class="fas fa-magnifying-glass"></i></button>
                         <div class="search-container" id="search-container">
@@ -169,7 +172,10 @@
             </div>
             <div class="error-overlay hidden" id="error-overlay">
                 <i class="fas fa-exclamation-triangle"></i>
-                <p id="error-text">Something went wrong.</p>
+                <p id="error-text" style="white-space: pre-line;">Something went wrong.</p>
+                <button class="retry-btn" id="retry-btn" onclick="location.reload()">
+                    <i class="fas fa-rotate-right"></i> Retry
+                </button>
             </div>
         </main>
     </div>

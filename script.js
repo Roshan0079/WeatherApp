@@ -1,8 +1,4 @@
 document.addEventListener('DOMContentLoaded', () => {
-    if (window.location.protocol === 'file:') {
-        document.body.innerHTML = '<div style="color:white; padding: 40px; text-align: center;"><h2>⚠️ Please open the app via Flask!</h2><p>You opened this file directly from your computer (file://). The Weather API requires a server.<br><br>Please run <code>python weather.py</code> in your terminal and open <a href="http://127.0.0.1:5000" style="color:#4facfe;">http://127.0.0.1:5000</a> in your browser.</p></div>';
-        return;
-    }
 
     const API_BASE = (window.location.protocol === 'file:' || (window.location.hostname === '127.0.0.1' && window.location.port !== '5000')) 
         ? 'http://127.0.0.1:5000' 
@@ -17,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const loadingOverlay = document.getElementById('loading-overlay');
     const errorOverlay = document.getElementById('error-overlay');
     const errorText = document.getElementById('error-text');
+    const currentLocationBtn = document.getElementById('current-location-btn');
 
     // Main content
     const heroTemp = document.getElementById('hero-temp');
@@ -194,13 +191,20 @@ document.addEventListener('DOMContentLoaded', () => {
         await fetchWeatherByCity(city);
     });
 
-    // ---- Geolocation on Load ----
-    function initGeolocation() {
+    currentLocationBtn.addEventListener('click', () => {
+        // Always fetch fresh location when user explicitly clicks the button
+        requestFreshLocation();
+    });
+
+    // ---- Geolocation ----
+    function requestFreshLocation() {
         showLoading();
         if ('geolocation' in navigator) {
             navigator.geolocation.getCurrentPosition(
                 async (position) => {
                     const { latitude, longitude } = position.coords;
+                    // Cache coordinates so we don't need to ask again
+                    localStorage.setItem('weatherwise_coords', JSON.stringify({ lat: latitude, lon: longitude }));
                     await fetchWeatherByCoords(latitude, longitude);
                 },
                 () => {
@@ -213,9 +217,49 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function initGeolocation() {
+        // Check if we already have cached coordinates from a previous session
+        const cached = localStorage.getItem('weatherwise_coords');
+        if (cached) {
+            try {
+                const { lat, lon } = JSON.parse(cached);
+                showLoading();
+                fetchWeatherByCoords(lat, lon);
+                return;
+            } catch (e) {
+                // Invalid cached data, fall through to fresh request
+                localStorage.removeItem('weatherwise_coords');
+            }
+        }
+        // First visit — ask for permission
+        requestFreshLocation();
+    }
+
+    // ---- Retry State ----
+    let retryTimer = null;
+    const MAX_RETRIES = 3;
+    let retryCount = 0;
+
+    function isNetworkError(err) {
+        return err instanceof TypeError && (
+            err.message.includes('Failed to fetch') ||
+            err.message.includes('NetworkError') ||
+            err.message.includes('Network request failed')
+        );
+    }
+
+    function clearRetry() {
+        if (retryTimer) {
+            clearTimeout(retryTimer);
+            retryTimer = null;
+        }
+        retryCount = 0;
+    }
+
     // ---- Fetch Functions ----
     async function fetchWeatherFromSuggestion(s) {
         showLoading();
+        clearRetry();
         try {
             const params = new URLSearchParams({
                 lat: s.latitude,
@@ -230,12 +274,18 @@ document.addEventListener('DOMContentLoaded', () => {
             updateUI(data);
             addToRecent(data);
         } catch (err) {
-            showError(err.message);
+            if (isNetworkError(err)) {
+                showError('Cannot connect to server. Make sure the backend is running:\n  python weather.py');
+                scheduleRetry(() => fetchWeatherFromSuggestion(s));
+            } else {
+                showError(err.message);
+            }
         }
     }
 
     async function fetchWeatherByCity(city) {
         showLoading();
+        clearRetry();
         try {
             const response = await fetch(`${API_BASE}/api/weather?city=${encodeURIComponent(city)}`);
             const data = await response.json();
@@ -243,20 +293,42 @@ document.addEventListener('DOMContentLoaded', () => {
             updateUI(data);
             addToRecent(data);
         } catch (err) {
-            showError(err.message);
+            if (isNetworkError(err)) {
+                showError('Cannot connect to server. Make sure the backend is running:\n  python weather.py');
+                scheduleRetry(() => fetchWeatherByCity(city));
+            } else {
+                showError(err.message);
+            }
         }
     }
 
     async function fetchWeatherByCoords(lat, lon) {
         showLoading();
+        clearRetry();
         try {
             const response = await fetch(`${API_BASE}/api/weather/coords?lat=${lat}&lon=${lon}`);
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Failed to fetch weather');
             updateUI(data);
         } catch (err) {
-            showError(err.message);
+            if (isNetworkError(err)) {
+                showError('Cannot connect to server. Make sure the backend is running:\n  python weather.py');
+                scheduleRetry(() => fetchWeatherByCoords(lat, lon));
+            } else {
+                showError(err.message);
+            }
         }
+    }
+
+    function scheduleRetry(retryFn) {
+        if (retryCount >= MAX_RETRIES) {
+            showError('Server is unreachable. Please start the backend:\n  python weather.py\n\nThen refresh this page.');
+            return;
+        }
+        retryCount++;
+        retryTimer = setTimeout(() => {
+            retryFn();
+        }, 5000);
     }
 
     // ---- Update UI ----
